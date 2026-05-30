@@ -1,224 +1,445 @@
 """
-ابزار استخراج اطلاعات کامنت‌گذاران اینستاگرام - نسخه GUI ساده
+ابزار استخراج اطلاعات کامنت‌گذاران اینستاگرام - نسخه وب
+قابل اجرا روی Render و هاست‌های مشابه
 """
+
+from flask import Flask, render_template_string, request, jsonify, session
 import instaloader
 import re
 import json
 import time
 import os
 from datetime import datetime
-import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox
 from threading import Thread
 
-class InstagramApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("استخراج اطلاعات کامنت‌گذاران اینستاگرام")
-        self.root.geometry("700x600")
-        self.root.configure(bg='#f0f0f0')
+app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-here')
+
+# HTML قالبی برای رابط کاربری
+HTML_TEMPLATE = '''
+<!DOCTYPE html>
+<html dir="rtl" lang="fa">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>استخراج اطلاعات کامنت‌گذاران اینستاگرام</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
         
-        # متغیرها
-        self.is_running = False
+        body {
+            font-family: 'Tahoma', 'Arial', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
         
-        # ساخت رابط کاربری
-        self.setup_ui()
-    
-    def setup_ui(self):
-        # عنوان
-        title_label = tk.Label(self.root, text="🕵️ ابزار استخراج اطلاعات اینستاگرام", 
-                               font=("Arial", 16, "bold"), bg='#f0f0f0', fg='#333')
-        title_label.pack(pady=10)
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
         
-        # فریم ورودی
-        input_frame = tk.Frame(self.root, bg='#f0f0f0')
-        input_frame.pack(pady=10, padx=20, fill='x')
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
         
-        # لینک پست
-        tk.Label(input_frame, text="🔗 لینک پست اینستاگرام:", bg='#f0f0f0', font=("Arial", 10)).pack(anchor='w')
-        self.post_url_entry = tk.Entry(input_frame, width=70, font=("Arial", 10))
-        self.post_url_entry.pack(fill='x', pady=5)
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
         
-        # نام کاربری
-        tk.Label(input_frame, text="👤 نام کاربری اینستاگرام خودتان:", bg='#f0f0f0', font=("Arial", 10)).pack(anchor='w')
-        self.username_entry = tk.Entry(input_frame, width=70, font=("Arial", 10))
-        self.username_entry.pack(fill='x', pady=5)
+        .content {
+            padding: 30px;
+        }
         
-        # رمز عبور
-        tk.Label(input_frame, text="🔐 رمز عبور:", bg='#f0f0f0', font=("Arial", 10)).pack(anchor='w')
-        self.password_entry = tk.Entry(input_frame, width=70, show="*", font=("Arial", 10))
-        self.password_entry.pack(fill='x', pady=5)
+        .form-group {
+            margin-bottom: 20px;
+        }
         
-        # تعداد کامنت
-        tk.Label(input_frame, text="📊 تعداد کامنت برای استخراج (پیش‌فرض 50):", bg='#f0f0f0', font=("Arial", 10)).pack(anchor='w')
-        self.max_comments_entry = tk.Entry(input_frame, width=20, font=("Arial", 10))
-        self.max_comments_entry.insert(0, "50")
-        self.max_comments_entry.pack(anchor='w', pady=5)
+        label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 8px;
+            color: #333;
+        }
         
-        # دکمه شروع
-        self.start_button = tk.Button(self.root, text="🚀 شروع استخراج", command=self.start_scraping,
-                                       bg='#4CAF50', fg='white', font=("Arial", 12, "bold"),
-                                       padx=20, pady=10)
-        self.start_button.pack(pady=10)
+        input, textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
         
-        # منطقه نمایش خروجی
-        output_frame = tk.Frame(self.root, bg='#f0f0f0')
-        output_frame.pack(pady=10, padx=20, fill='both', expand=True)
+        input:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
         
-        tk.Label(output_frame, text="📝 وضعیت اجرا:", bg='#f0f0f0', font=("Arial", 10, "bold")).pack(anchor='w')
-        self.output_text = scrolledtext.ScrolledText(output_frame, height=15, width=80, 
-                                                       font=("Consolas", 9))
-        self.output_text.pack(fill='both', expand=True)
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 14px 40px;
+            border-radius: 50px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            width: 100%;
+            transition: transform 0.2s;
+        }
         
-        # هشدار
-        warning_label = tk.Label(self.root, text="⚠️ توجه: از یک اکانت تستی استفاده کنید (نه اکانت اصلی)", 
-                                 bg='#ffe0e0', fg='red', font=("Arial", 9))
-        warning_label.pack(pady=5, fill='x')
-    
-    def log_message(self, message, color='black'):
-        """اضافه کردن پیام به منطقه خروجی"""
-        self.output_text.insert(tk.END, f"{message}\n", color)
-        self.output_text.see(tk.END)
-        self.root.update()
-    
-    def extract_phone_numbers(self, text):
-        """استخراج شماره تماس از متن"""
-        patterns = [
-            r'0\d{9,10}',
-            r'\+98\d{10}',
-            r'0098\d{10}',
-            r'09\d{9}'
-        ]
-        phones = []
-        for pattern in patterns:
-            phones.extend(re.findall(pattern, text))
-        return list(set(phones))
-    
-    def extract_emails(self, text):
-        """استخراج ایمیل از متن"""
-        email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-        return list(set(re.findall(email_pattern, text)))
-    
-    def scrape_comments(self, post_url, username, password, max_comments):
-        """تابع اصلی استخراج"""
-        try:
-            self.log_message("🔑 در حال ورود به اینستاگرام...")
-            L = instaloader.Instaloader(
-                max_connection_attempts=3,
-                request_timeout=30,
-                sleep_on_rate_limit=True
-            )
+        button:hover {
+            transform: translateY(-2px);
+        }
+        
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .output {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            display: none;
+        }
+        
+        .output h3 {
+            margin-bottom: 15px;
+            color: #333;
+        }
+        
+        .log-area {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 10px;
+            font-family: 'Consolas', monospace;
+            font-size: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        
+        .results {
+            margin-top: 20px;
+            padding: 15px;
+            background: white;
+            border-radius: 10px;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .alert {
+            padding: 12px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .alert-warning {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            color: #856404;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 20px;
+        }
+        
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            margin: 5px;
+        }
+        
+        .badge-success {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .badge-info {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🕵️ ابزار استخراج اطلاعات اینستاگرام</h1>
+            <p>استخراج کامنت‌ها، بیوگرافی، شماره تماس و ایمیل</p>
+        </div>
+        
+        <div class="content">
+            <div class="alert alert-warning">
+                ⚠️ <strong>توجه مهم:</strong> از یک اکانت تستی اینستاگرام استفاده کنید. استفاده از اکانت اصلی ممکن است منجر به مسدودیت شود.
+            </div>
             
-            L.login(username, password)
-            self.log_message("✅ ورود موفقیت‌آمیز بود")
-            
-            self.log_message(f"📱 در حال دریافت پست...")
-            post = instaloader.Post.from_url(L.context, post_url)
-            self.log_message(f"📊 تعداد کل کامنت‌های این پست: {post.comments}")
-            
-            results = []
-            count = 0
-            
-            for comment in post.get_comments():
-                if count >= max_comments:
-                    break
+            <form id="scrapeForm">
+                <div class="form-group">
+                    <label>🔗 لینک پست اینستاگرام:</label>
+                    <input type="text" id="postUrl" placeholder="https://www.instagram.com/p/..." required>
+                </div>
                 
-                count += 1
-                commenter = comment.owner
-                self.log_message(f"🔍 [{count}/{max_comments}] در حال بررسی @{commenter.username}")
+                <div class="form-group">
+                    <label>👤 نام کاربری اینستاگرام (اکانت تستی):</label>
+                    <input type="text" id="username" placeholder="your_test_account" required>
+                </div>
                 
-                try:
-                    profile = instaloader.Profile.from_username(L.context, commenter.username)
-                    bio = profile.biography if profile.biography else ""
+                <div class="form-group">
+                    <label>🔐 رمز عبور:</label>
+                    <input type="password" id="password" placeholder="********" required>
+                </div>
+                
+                <div class="form-group">
+                    <label>📊 تعداد کامنت برای استخراج:</label>
+                    <input type="number" id="maxComments" value="50" min="1" max="500">
+                </div>
+                
+                <button type="submit" id="submitBtn">🚀 شروع استخراج</button>
+            </form>
+            
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p style="margin-top: 10px;">در حال استخراج اطلاعات... لطفاً صبر کنید</p>
+                <small>این عملیات ممکن است چند دقیقه طول بکشد</small>
+            </div>
+            
+            <div class="output" id="output">
+                <h3>📝 وضعیت اجرا:</h3>
+                <div class="log-area" id="logArea"></div>
+                
+                <div class="results" id="resultsArea" style="display:none;">
+                    <h3>📊 نتایج استخراج:</h3>
+                    <div id="resultsContent"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const form = document.getElementById('scrapeForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const loading = document.getElementById('loading');
+        const output = document.getElementById('output');
+        const logArea = document.getElementById('logArea');
+        const resultsArea = document.getElementById('resultsArea');
+        const resultsContent = document.getElementById('resultsContent');
+        
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const postUrl = document.getElementById('postUrl').value;
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const maxComments = document.getElementById('maxComments').value;
+            
+            // نمایش بخش خروجی
+            output.style.display = 'block';
+            resultsArea.style.display = 'none';
+            logArea.innerHTML = '';
+            loading.style.display = 'block';
+            submitBtn.disabled = true;
+            
+            try {
+                const response = await fetch('/scrape', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        post_url: postUrl,
+                        username: username,
+                        password: password,
+                        max_comments: parseInt(maxComments)
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    logArea.innerHTML = data.logs.join('\\n');
                     
-                    phones = self.extract_phone_numbers(bio)
-                    emails = self.extract_emails(bio)
-                    
-                    user_data = {
-                        "username": commenter.username,
-                        "full_name": profile.full_name,
-                        "biography": bio,
-                        "phone_numbers": phones,
-                        "emails": emails,
-                        "followers": profile.followers,
-                        "is_private": profile.is_private
+                    if (data.results && data.results.length > 0) {
+                        resultsArea.style.display = 'block';
+                        let html = '<div style="margin-bottom: 15px;">';
+                        html += '<p><strong>✅ تعداد کل کاربران:</strong> ' + data.results.length + '</p>';
+                        html += '<p><strong>📞 کاربران دارای شماره تماس:</strong> ' + data.users_with_phone_count + '</p>';
+                        html += '</div>';
+                        
+                        html += '<div style="max-height: 400px; overflow-y: auto;">';
+                        data.results.forEach(user => {
+                            html += '<div style="border: 1px solid #e0e0e0; padding: 10px; margin-bottom: 10px; border-radius: 10px;">';
+                            html += '<strong>🆔 @' + user.username + '</strong><br>';
+                            html += '<strong>👤 نام:</strong> ' + (user.full_name || '-') + '<br>';
+                            if (user.phone_numbers && user.phone_numbers.length > 0) {
+                                html += '<span class="badge badge-success">📞 ' + user.phone_numbers.join(', ') + '</span><br>';
+                            }
+                            if (user.emails && user.emails.length > 0) {
+                                html += '<span class="badge badge-info">📧 ' + user.emails.join(', ') + '</span><br>';
+                            }
+                            if (user.biography) {
+                                html += '<small><strong>📝 بیوگرافی:</strong> ' + user.biography.substring(0, 150) + '</small><br>';
+                            }
+                            html += '</div>';
+                        });
+                        html += '</div>';
+                        
+                        resultsContent.innerHTML = html;
                     }
-                    results.append(user_data)
-                    
-                    if phones:
-                        self.log_message(f"   📞 شماره تماس: {', '.join(phones)}", 'green')
-                    if emails:
-                        self.log_message(f"   📧 ایمیل: {', '.join(emails)}", 'blue')
-                    
-                except Exception as e:
-                    self.log_message(f"   ⚠️ خطا: {e}", 'orange')
+                } else {
+                    logArea.innerHTML = data.logs.join('\\n') + '\\n\\n❌ خطا: ' + data.error;
+                }
+            } catch (error) {
+                logArea.innerHTML = '❌ خطا در ارتباط با سرور: ' + error.message;
+            } finally {
+                loading.style.display = 'none';
+                submitBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
+'''
+
+def extract_phone_numbers(text):
+    """استخراج شماره تماس از متن"""
+    patterns = [
+        r'0\d{9,10}',
+        r'\+98\d{10}',
+        r'0098\d{10}',
+        r'09\d{9}'
+    ]
+    phones = []
+    for pattern in patterns:
+        phones.extend(re.findall(pattern, text))
+    return list(set(phones))
+
+def extract_emails(text):
+    """استخراج ایمیل از متن"""
+    email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+    return list(set(re.findall(email_pattern, text)))
+
+@app.route('/')
+def index():
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/scrape', methods=['POST'])
+def scrape():
+    try:
+        data = request.json
+        post_url = data.get('post_url')
+        username = data.get('username')
+        password = data.get('password')
+        max_comments = data.get('max_comments', 50)
+        
+        logs = []
+        def log_message(msg):
+            logs.append(msg)
+            print(msg)
+        
+        log_message("🔑 در حال ورود به اینستاگرام...")
+        L = instaloader.Instaloader(
+            max_connection_attempts=3,
+            request_timeout=30,
+            sleep_on_rate_limit=True
+        )
+        
+        L.login(username, password)
+        log_message("✅ ورود موفقیت‌آمیز بود")
+        
+        log_message(f"📱 در حال دریافت پست...")
+        post = instaloader.Post.from_url(L.context, post_url)
+        log_message(f"📊 تعداد کل کامنت‌های این پست: {post.comments}")
+        
+        results = []
+        count = 0
+        
+        for comment in post.get_comments():
+            if count >= max_comments:
+                break
+            
+            count += 1
+            commenter = comment.owner
+            log_message(f"🔍 [{count}/{max_comments}] در حال بررسی @{commenter.username}")
+            
+            try:
+                profile = instaloader.Profile.from_username(L.context, commenter.username)
+                bio = profile.biography if profile.biography else ""
                 
-                time.sleep(1.5)
+                phones = extract_phone_numbers(bio)
+                emails = extract_emails(bio)
+                
+                user_data = {
+                    "username": commenter.username,
+                    "full_name": profile.full_name,
+                    "biography": bio,
+                    "phone_numbers": phones,
+                    "emails": emails,
+                    "followers": profile.followers,
+                    "is_private": profile.is_private
+                }
+                results.append(user_data)
+                
+                if phones:
+                    log_message(f"   📞 شماره تماس: {', '.join(phones)}")
+                if emails:
+                    log_message(f"   📧 ایمیل: {', '.join(emails)}")
+                
+            except Exception as e:
+                log_message(f"   ⚠️ خطا: {e}")
             
-            # ذخیره نتایج
-            filename = f"instagram_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            with open(filename, 'w', encoding='utf-8') as f:
-                json.dump(results, f, indent=2, ensure_ascii=False)
-            
-            self.log_message(f"\n✅ استخراج کامل شد!", 'green')
-            self.log_message(f"📁 نتایج در فایل {filename} ذخیره شد", 'green')
-            self.log_message(f"📊 تعداد کل: {len(results)} کاربر", 'green')
-            self.log_message(f"📞 کاربران دارای شماره: {sum(1 for r in results if r['phone_numbers'])}", 'green')
-            
-            # نمایش خلاصه کاربران با شماره
-            users_with_phone = [r for r in results if r['phone_numbers']]
-            if users_with_phone:
-                self.log_message(f"\n📋 لیست کاربران دارای شماره تماس:", 'blue')
-                for user in users_with_phone:
-                    self.log_message(f"   @{user['username']}: {', '.join(user['phone_numbers'])}", 'blue')
-            
-            messagebox.showinfo("پایان کار", f"استخراج با موفقیت انجام شد!\n{len(results)} کاربر پردازش شد.\nفایل خروجی: {filename}")
-            
-        except Exception as e:
-            self.log_message(f"❌ خطا: {e}", 'red')
-            messagebox.showerror("خطا", str(e))
+            time.sleep(1.5)
         
-        finally:
-            self.is_running = False
-            self.start_button.config(state='normal')
-    
-    def start_scraping(self):
-        if self.is_running:
-            return
+        log_message(f"\n✅ استخراج کامل شد!")
+        log_message(f"📊 تعداد کل: {len(results)} کاربر")
+        log_message(f"📞 کاربران دارای شماره: {sum(1 for r in results if r['phone_numbers'])}")
         
-        # گرفتن ورودی‌ها
-        post_url = self.post_url_entry.get().strip()
-        username = self.username_entry.get().strip()
-        password = self.password_entry.get().strip()
+        return jsonify({
+            'success': True,
+            'logs': logs,
+            'results': results,
+            'users_with_phone_count': sum(1 for r in results if r['phone_numbers'])
+        })
         
-        try:
-            max_comments = int(self.max_comments_entry.get().strip())
-        except ValueError:
-            max_comments = 50
-        
-        # اعتبارسنجی
-        if not post_url:
-            messagebox.showerror("خطا", "لطفاً لینک پست را وارد کنید")
-            return
-        if not username or not password:
-            messagebox.showerror("خطا", "لطفاً نام کاربری و رمز عبور را وارد کنید")
-            return
-        
-        # پاک کردن خروجی قبلی
-        self.output_text.delete(1.0, tk.END)
-        
-        self.is_running = True
-        self.start_button.config(state='disabled')
-        
-        # اجرا در یک ترد جداگانه
-        thread = Thread(target=self.scrape_comments, args=(post_url, username, password, max_comments))
-        thread.daemon = True
-        thread.start()
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'logs': logs if 'logs' in locals() else [],
+            'error': str(e)
+        })
 
-def main():
-    root = tk.Tk()
-    app = InstagramApp(root)
-    root.mainloop()
-
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
