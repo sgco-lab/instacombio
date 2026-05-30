@@ -3,14 +3,12 @@
 قابل اجرا روی Render و هاست‌های مشابه
 """
 
-from flask import Flask, render_template_string, request, jsonify, session
+from flask import Flask, render_template_string, request, jsonify
 import instaloader
 import re
-import json
 import time
 import os
 from datetime import datetime
-from threading import Thread
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-here')
@@ -266,7 +264,6 @@ HTML_TEMPLATE = '''
             const password = document.getElementById('password').value;
             const maxComments = document.getElementById('maxComments').value;
             
-            // نمایش بخش خروجی
             output.style.display = 'block';
             resultsArea.style.display = 'none';
             logArea.innerHTML = '';
@@ -373,9 +370,9 @@ def scrape():
         log_message("🔑 در حال ورود به اینستاگرام...")
         L = instaloader.Instaloader(
             max_connection_attempts=3,
-            request_timeout=30,
-            sleep_on_rate_limit=True
+            request_timeout=30
         )
+        L.sleep_on_rate_limit = True
         
         L.login(username, password)
         log_message("✅ ورود موفقیت‌آمیز بود")
